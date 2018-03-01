@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2015 - 2016, The Linux Foundation. All rights reserved.
+* Copyright (c) 2015 - 2017, The Linux Foundation. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are
@@ -234,7 +234,7 @@ int HWCColorManager::SetFrameCapture(void *params, bool enable, HWCDisplay *hwc_
         return -EFAULT;
       } else {
         frame_capture_data->buffer = reinterpret_cast<uint8_t *>(buffer);
-        frame_capture_data->buffer_stride = buffer_info.buffer_config.width;
+        frame_capture_data->buffer_stride = buffer_info.alloc_buffer_info.stride;
         frame_capture_data->buffer_size = buffer_info.alloc_buffer_info.size;
       }
       ret = hwc_display->FrameCaptureAsync(buffer_info, 1);
@@ -271,7 +271,6 @@ int HWCColorManager::SetHWDetailedEnhancerConfig(void *params, HWCDisplay *hwc_d
   PPDETuningCfgData *de_tuning_cfg_data = reinterpret_cast<PPDETuningCfgData*>(params);
   if (de_tuning_cfg_data->cfg_pending == true) {
     if (!de_tuning_cfg_data->cfg_en) {
-      de_data.override_flags = kOverrideDEEnable;
       de_data.enable = 0;
     } else {
       de_data.override_flags = kOverrideDEEnable;
@@ -335,7 +334,6 @@ int HWCColorManager::SetHWDetailedEnhancerConfig(void *params, HWCDisplay *hwc_d
 }
 
 void HWCColorManager::SetColorModeDetailEnhancer(HWCDisplay *hwc_display) {
-#ifdef ENABLE_DETAIL_ENHANCER
   SCOPE_LOCK(locker_);
   int err = -1;
   PPPendingParams pending_action;
@@ -350,7 +348,6 @@ void HWCColorManager::SetColorModeDetailEnhancer(HWCDisplay *hwc_display) {
       err = SetHWDetailedEnhancerConfig(pending_action.params, hwc_display);
     }
   }
-#endif
   return;
 }
 
@@ -407,8 +404,8 @@ int HWCQDCMModeManager::EnableActiveFeatures(bool enable,
   };
 
   if (socket_fd_ < 0) {
-    DLOGW("No socket connection available - assuming dpps is not enabled");
-    return 0;
+    DLOGW("No socket connection available!");
+    return -EFAULT;
   }
 
   if (!enable) {  // if client requesting to disable it.
@@ -462,4 +459,4 @@ int HWCQDCMModeManager::EnableQDCMMode(bool enable, HWCDisplay *hwc_display) {
   return ret;
 }
 
-}  // namespace sdm
+} // namespace sdm

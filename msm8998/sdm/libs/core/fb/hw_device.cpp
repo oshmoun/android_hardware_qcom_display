@@ -46,7 +46,6 @@
 #include <vector>
 #include <algorithm>
 #include <string>
-#include <sstream>
 
 #include "hw_device.h"
 #include "hw_primary.h"
@@ -243,7 +242,9 @@ DisplayError HWDevice::Validate(HWLayers *hw_layers) {
         mdp_layer.pipe_ndx = pipe_info->pipe_id;
         mdp_layer.horz_deci = pipe_info->horizontal_decimation;
         mdp_layer.vert_deci = pipe_info->vertical_decimation;
-
+#ifdef MDP_COMMIT_RECT_NUM
+        mdp_layer.rect_num = pipe_info->rect;
+#endif
         SetRect(pipe_info->src_roi, &mdp_layer.src_rect);
         SetRect(pipe_info->dst_roi, &mdp_layer.dst_rect);
         SetMDPFlags(&layer, is_rotator_used, is_cursor_pipe_used, &mdp_layer.flags);
@@ -351,6 +352,9 @@ DisplayError HWDevice::Validate(HWLayers *hw_layers) {
   mdp_commit.dest_scaler_cnt = UINT32(hw_layer_info.dest_scale_info_map.size());
 
   mdp_commit.flags |= MDP_VALIDATE_LAYER;
+#ifdef MDP_COMMIT_RECT_NUM
+  mdp_commit.flags |= MDP_COMMIT_RECT_NUM;
+#endif
   if (Sys::ioctl_(device_fd_, INT(MSMFB_ATOMIC_COMMIT), &mdp_disp_commit_) < 0) {
     if (errno == ESHUTDOWN) {
       DLOGI_IF(kTagDriverConfig, "Driver is processing shutdown sequence");
@@ -1138,8 +1142,8 @@ DisplayError HWDevice::SetCursorPosition(HWLayers *hw_layers, int x, int y) {
   async_layer.pipe_ndx = left_pipe->pipe_id;
   async_layer.src.x = UINT32(left_pipe->src_roi.left);
   async_layer.src.y = UINT32(left_pipe->src_roi.top);
-  async_layer.dst.x = UINT32(x);
-  async_layer.dst.y = UINT32(y);
+  async_layer.dst.x = UINT32(left_pipe->dst_roi.left);
+  async_layer.dst.y = UINT32(left_pipe->dst_roi.top);
 
   mdp_position_update pos_update = {};
   pos_update.input_layer_cnt = 1;
@@ -1353,49 +1357,6 @@ DisplayError HWDevice::GetMixerAttributes(HWMixerAttributes *mixer_attributes) {
 
   *mixer_attributes = mixer_attributes_;
 
-  return kErrorNone;
-}
-
-DisplayError HWDevice::DumpDebugData() {
-  DLOGW("Pingpong timeout occurred in the driver.");
-#ifdef USER_DEBUG
-  // Save the xlogs on ping pong time out
-  const char* xlog_path = "/data/vendor/display/mdp_xlog";
-  DLOGD("Dumping debugfs data to %s", xlog_path);
-  std::ostringstream  dst;
-  auto file = open(xlog_path, O_CREAT | O_DSYNC | O_RDWR, "w+");
-  if (file < 0) {
-    DLOGE("Couldn't open file: err:%d (%s)",errno, strerror(errno));
-    return kErrorResources;
-  }
-  dst << "+++ MDP:XLOG +++" << std::endl;
-  std::ifstream  src("/sys/kernel/debug/mdp/xlog/dump");
-  dst << src.rdbuf() << std::endl;
-  src.close();
-
-  dst << "+++ MDP:REG_XLOG +++" << std::endl;
-  src.open("/sys/kernel/debug/mdp/xlog/reg_xlog");
-  dst << src.rdbuf() << std::endl;
-  src.close();
-
-  dst << "+++ MDP:DBGBUS_XLOG +++" << std::endl;
-  src.open("/sys/kernel/debug/mdp/xlog/dbgbus_xlog");
-  dst << src.rdbuf() << std::endl;
-  src.close();
-
-  dst << "+++ MDP:VBIF_DBGBUS_XLOG +++" << std::endl;
-  src.open("/sys/kernel/debug/mdp/xlog/vbif_dbgbus_xlog");
-  dst << src.rdbuf() << std::endl;
-  src.close();
-  auto ret = write(file, dst.str().c_str(), dst.str().size());
-  if (ret < 0) {
-    DLOGE("Failed to write xlog data err: %d (%s)", errno, strerror(errno));
-  } else {
-    fsync(file);
-  }
-  close(file);
-  DLOGD("Finished dumping xlogs");;
-#endif
   return kErrorNone;
 }
 

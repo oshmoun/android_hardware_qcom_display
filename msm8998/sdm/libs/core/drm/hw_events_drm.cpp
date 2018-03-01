@@ -81,11 +81,9 @@ DisplayError HWEventsDRM::InitializePollFd() {
         Sys::pread_(poll_fds_[i].fd, data, kMaxStringLength, 0);
       } break;
       case HWEvent::IDLE_NOTIFY:
-      case HWEvent::CEC_READ_MESSAGE:
       case HWEvent::SHOW_BLANK_EVENT:
       case HWEvent::THERMAL_LEVEL:
       case HWEvent::IDLE_POWER_COLLAPSE:
-      case HWEvent::PINGPONG_TIMEOUT:
         break;
     }
   }
@@ -103,9 +101,6 @@ DisplayError HWEventsDRM::SetEventParser() {
         break;
       case HWEvent::IDLE_NOTIFY:
         event_data.event_parser = &HWEventsDRM::HandleIdleTimeout;
-        break;
-      case HWEvent::CEC_READ_MESSAGE:
-        event_data.event_parser = &HWEventsDRM::HandleCECMessage;
         break;
       case HWEvent::EXIT:
         event_data.event_parser = &HWEventsDRM::HandleThreadExit;
@@ -190,7 +185,6 @@ DisplayError HWEventsDRM::CloseFds() {
         poll_fds_[i].fd = -1;
         break;
       case HWEvent::IDLE_NOTIFY:
-      case HWEvent::CEC_READ_MESSAGE:
       case HWEvent::SHOW_BLANK_EVENT:
       case HWEvent::THERMAL_LEVEL:
       case HWEvent::IDLE_POWER_COLLAPSE:
@@ -242,11 +236,9 @@ void *HWEventsDRM::DisplayEventHandler() {
           }
           break;
         case HWEvent::IDLE_NOTIFY:
-        case HWEvent::CEC_READ_MESSAGE:
         case HWEvent::SHOW_BLANK_EVENT:
         case HWEvent::THERMAL_LEVEL:
         case HWEvent::IDLE_POWER_COLLAPSE:
-        case HWEvent::PINGPONG_TIMEOUT:
           if (poll_fd.fd >= 0 && (poll_fd.revents & POLLPRI) &&
               (Sys::pread_(poll_fd.fd, data, kMaxStringLength, 0) > 0)) {
             (this->*(event_data_list_[i]).event_parser)(data);
@@ -297,10 +289,6 @@ void HWEventsDRM::VSyncHandlerCallback(int fd, unsigned int sequence, unsigned i
 
 void HWEventsDRM::HandleIdleTimeout(char *data) {
   event_handler_->IdleTimeout();
-}
-
-void HWEventsDRM::HandleCECMessage(char *data) {
-  event_handler_->CECMessage(data);
 }
 
 void HWEventsDRM::HandleIdlePowerCollapse(char *data) {

@@ -38,7 +38,8 @@ class HWPrimaryInterface;
 class DisplayPrimary : public DisplayBase, HWEventHandler {
  public:
   DisplayPrimary(DisplayEventHandler *event_handler, HWInfoInterface *hw_info_intf,
-                 BufferSyncHandler *buffer_sync_handler, CompManager *comp_manager);
+                 BufferSyncHandler *buffer_sync_handler, BufferAllocator *buffer_allocator,
+                 CompManager *comp_manager);
   virtual DisplayError Init();
   virtual DisplayError Prepare(LayerStack *layer_stack);
   virtual DisplayError Commit(LayerStack *layer_stack);
@@ -58,19 +59,13 @@ class DisplayPrimary : public DisplayBase, HWEventHandler {
   virtual DisplayError Blank(bool blank) { return kErrorNone; }
   virtual void IdleTimeout();
   virtual void ThermalEvent(int64_t thermal_level);
-  virtual void CECMessage(char *message) { }
   virtual void IdlePowerCollapse();
-  virtual void PingPongTimeout();
 
  private:
   bool NeedsAVREnable();
 
-  std::vector<HWEvent> event_list_ = { HWEvent::VSYNC, HWEvent::EXIT,
-                                       HWEvent::IDLE_NOTIFY,
-                                       HWEvent::SHOW_BLANK_EVENT,
-                                       HWEvent::THERMAL_LEVEL,
-                                       HWEvent::IDLE_POWER_COLLAPSE,
-                                       HWEvent::PINGPONG_TIMEOUT };
+  std::vector<HWEvent> event_list_ = { HWEvent::VSYNC, HWEvent::EXIT, HWEvent::IDLE_NOTIFY,
+      HWEvent::SHOW_BLANK_EVENT, HWEvent::THERMAL_LEVEL, HWEvent::IDLE_POWER_COLLAPSE };
   bool avr_prop_disabled_ = false;
   bool switch_to_cmd_ = false;
 };

@@ -38,15 +38,14 @@
 
 namespace sdm {
 
-std::bitset<kDisplayMax> DisplayBase::needs_validate_ = 0;
-
 // TODO(user): Have a single structure handle carries all the interface pointers and variables.
 DisplayBase::DisplayBase(DisplayType display_type, DisplayEventHandler *event_handler,
                          HWDeviceType hw_device_type, BufferSyncHandler *buffer_sync_handler,
-                         CompManager *comp_manager, HWInfoInterface *hw_info_intf)
+                         BufferAllocator *buffer_allocator, CompManager *comp_manager,
+                         HWInfoInterface *hw_info_intf)
   : display_type_(display_type), event_handler_(event_handler), hw_device_type_(hw_device_type),
-    buffer_sync_handler_(buffer_sync_handler), comp_manager_(comp_manager),
-    hw_info_intf_(hw_info_intf) {
+    buffer_sync_handler_(buffer_sync_handler), buffer_allocator_(buffer_allocator),
+    comp_manager_(comp_manager), hw_info_intf_(hw_info_intf) {
 }
 
 DisplayError DisplayBase::Init() {
@@ -78,10 +77,9 @@ DisplayError DisplayBase::Init() {
   error = comp_manager_->GetScaleLutConfig(&lut_info);
   if (error == kErrorNone) {
     error = hw_intf_->SetScaleLutConfig(&lut_info);
-  }
-
-  if (error != kErrorNone) {
-    goto CleanupOnError;
+    if (error != kErrorNone) {
+      goto CleanupOnError;
+    }
   }
 
   error = comp_manager_->RegisterDisplay(display_type_, display_attributes_, hw_panel_info_,
@@ -89,8 +87,6 @@ DisplayError DisplayBase::Init() {
   if (error != kErrorNone) {
     goto CleanupOnError;
   }
-
-  needs_validate_.set();
 
   if (hw_info_intf_) {
     HWResourceInfo hw_resource_info = HWResourceInfo();
@@ -215,7 +211,7 @@ DisplayError DisplayBase::ValidateGPUTargetParams() {
 DisplayError DisplayBase::Prepare(LayerStack *layer_stack) {
   lock_guard<recursive_mutex> obj(recursive_mutex_);
   DisplayError error = kErrorNone;
-  needs_validate_.set(display_type_);
+  needs_validate_ = true;
 
   if (!active_) {
     return kErrorPermission;
@@ -255,7 +251,7 @@ DisplayError DisplayBase::Prepare(LayerStack *layer_stack) {
     error = hw_intf_->Validate(&hw_layers_);
     if (error == kErrorNone) {
       // Strategy is successful now, wait for Commit().
-      needs_validate_.reset(display_type_);
+      needs_validate_ = false;
       break;
     }
     if (error == kErrorShutDown) {
@@ -274,7 +270,7 @@ DisplayError DisplayBase::Commit(LayerStack *layer_stack) {
   DisplayError error = kErrorNone;
 
   if (!active_) {
-    needs_validate_.set(display_type_);
+    needs_validate_ = true;
     return kErrorPermission;
   }
 
@@ -282,8 +278,8 @@ DisplayError DisplayBase::Commit(LayerStack *layer_stack) {
     return kErrorParameters;
   }
 
-  if (needs_validate_.test(display_type_)) {
-    DLOGV_IF(kTagNone, "Corresponding Prepare() is not called for display = %d", display_type_);
+  if (needs_validate_) {
+    DLOGE("Commit: Corresponding Prepare() is not called for display = %d", display_type_);
     return kErrorNotValidated;
   }
 
@@ -302,10 +298,9 @@ DisplayError DisplayBase::Commit(LayerStack *layer_stack) {
 
   CommitLayerParams(layer_stack);
 
-  if (comp_manager_->Commit(display_comp_ctx_, &hw_layers_)) {
-    if (error != kErrorNone) {
-      return error;
-    }
+  error = comp_manager_->Commit(display_comp_ctx_, &hw_layers_);
+  if (error != kErrorNone) {
+    return error;
   }
 
   // check if feature list cache is dirty and pending.
@@ -346,11 +341,11 @@ DisplayError DisplayBase::Flush() {
   error = hw_intf_->Flush();
   if (error == kErrorNone) {
     comp_manager_->Purge(display_comp_ctx_);
+    needs_validate_ = true;
   } else {
     DLOGW("Unable to flush display = %d", display_type_);
   }
 
-  needs_validate_.set(display_type_);
   return error;
 }
 
@@ -424,8 +419,6 @@ DisplayError DisplayBase::SetDisplayState(DisplayState state) {
     return kErrorNone;
   }
 
-  needs_validate_.set(display_type_);
-
   switch (state) {
   case kStateOff:
     hw_layers_.info.hw_layers.clear();
@@ -485,58 +478,17 @@ DisplayError DisplayBase::SetActiveConfig(uint32_t index) {
   lock_guard<recursive_mutex> obj(recursive_mutex_);
   DisplayError error = kErrorNone;
   uint32_t active_index = 0;
-  HWDisplayAttributes display_attrs;
-  HWMixerAttributes   mixer_attrs;
-  HWPanelInfo         hw_panel_info;
-  DisplayConfigVariableInfo fb_config = fb_config_;
 
   hw_intf_->GetActiveConfig(&active_index);
+
   if (active_index == index) {
     return kErrorNone;
   }
 
-  error = hw_intf_->GetDisplayAttributes(index, &display_attrs);
-  if (error != kErrorNone)
-    return error;
-
-  error = hw_intf_->GetHWPanelInfo(&hw_panel_info);
-  if (error != kErrorNone) {
-    DLOGE("Cannot get panel info.");
-    return error;
-  }
-
-  /* Now we can start doing the real magic */
   error = hw_intf_->SetDisplayAttributes(index);
   if (error != kErrorNone) {
     return error;
   }
-
-  error = hw_intf_->GetMixerAttributes(&mixer_attrs);
-  if (error != kErrorNone) {
-    return error;
-  }
-  DLOGI("Current mixer attributes: w%d h%d s%d",
-        mixer_attrs.width, mixer_attrs.height,
-        mixer_attrs.split_left);
-
-  mixer_attrs.split_left = display_attrs.is_device_split ?
-    hw_panel_info.split_info.left_split : mixer_attributes_.width;
-
-  if (mixer_attrs.split_left != mixer_attributes_.split_left) {
-    DLOGI("Setting mixer left split to %d", mixer_attrs.split_left);
-
-    error = hw_intf_->SetMixerAttributes(mixer_attrs);
-    if (error != kErrorNone)
-      DLOGW("Cannot set new mixer attributes.");
-  }
-
-  fb_config.x_pixels = display_attrs.x_pixels;
-  fb_config.y_pixels = display_attrs.y_pixels;
-  SetMixerResolution(fb_config.x_pixels, fb_config.y_pixels);
-
-  display_attributes_ = display_attrs;
-  mixer_attributes_ = mixer_attrs;
-  fb_config_ = fb_config;
 
   return ReconfigureDisplay();
 }
@@ -777,7 +729,7 @@ DisplayError DisplayBase::GetColorModeAttr(const std::string &color_mode, AttrVa
 
   auto it = color_mode_attr_map_.find(color_mode);
   if (it == color_mode_attr_map_.end()) {
-    DLOGI("Mode %s has no attribute", color_mode.c_str());
+    DLOGE("Failed: Mode %s without attribute", color_mode.c_str());
     return kErrorNotSupported;
   }
   *attr = it->second;
@@ -849,10 +801,6 @@ DisplayError DisplayBase::SetColorMode(const std::string &color_mode) {
   return error;
 }
 
-DisplayError DisplayBase::SetColorModeById(int32_t color_mode_id) {
-  return color_mgr_->ColorMgrSetMode(color_mode_id);
-}
-
 DisplayError DisplayBase::SetColorModeInternal(const std::string &color_mode) {
   DLOGV_IF(kTagQDCM, "Color Mode = %s", color_mode.c_str());
 
@@ -876,7 +824,7 @@ DisplayError DisplayBase::SetColorModeInternal(const std::string &color_mode) {
   return error;
 }
 
-DisplayError DisplayBase::GetValueOfModeAttribute(const AttrVal &attr, const std::string &type,
+DisplayError DisplayBase::GetValueOfModeAttribute(const AttrVal &attr,const std::string &type,
                                                   std::string *value) {
   if (!value) {
     return kErrorParameters;
@@ -1000,7 +948,8 @@ DisplayError DisplayBase::SetCursorPosition(int x, int y) {
     return kErrorNotSupported;
   }
 
-  DisplayError error = comp_manager_->ValidateCursorPosition(display_comp_ctx_, &hw_layers_, x, y);
+  DisplayError error = comp_manager_->ValidateAndSetCursorPosition(display_comp_ctx_, &hw_layers_,
+                                                                   x, y);
   if (error == kErrorNone) {
     return hw_intf_->SetCursorPosition(&hw_layers_, x, y);
   }
@@ -1327,7 +1276,6 @@ void DisplayBase::CommitLayerParams(LayerStack *layer_stack) {
     hw_layer.input_buffer.planes[0].stride = sdm_layer->input_buffer.planes[0].stride;
     hw_layer.input_buffer.size = sdm_layer->input_buffer.size;
     hw_layer.input_buffer.acquire_fence_fd = sdm_layer->input_buffer.acquire_fence_fd;
-    hw_layer.input_buffer.fb_id = sdm_layer->input_buffer.fb_id;
   }
 
   return;
@@ -1337,7 +1285,7 @@ void DisplayBase::PostCommitLayerParams(LayerStack *layer_stack) {
   // Copy the release fence from HWLayers to clients layers
     uint32_t hw_layers_count = UINT32(hw_layers_.info.hw_layers.size());
 
-  std::vector<uint32_t> fence_dup_flag = {};
+  std::vector<uint32_t> fence_dup_flag;
 
   for (uint32_t i = 0; i < hw_layers_count; i++) {
     uint32_t sdm_layer_index = hw_layers_.info.index[i];
@@ -1368,10 +1316,6 @@ void DisplayBase::PostCommitLayerParams(LayerStack *layer_stack) {
 
       sdm_layer->input_buffer.release_fence_fd = temp;
     }
-
-    // Reset the sync fence fds of HWLayer
-    hw_layer.input_buffer.acquire_fence_fd = -1;
-    hw_layer.input_buffer.release_fence_fd = -1;
   }
 
   return;

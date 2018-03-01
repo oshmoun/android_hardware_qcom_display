@@ -50,6 +50,7 @@ AC_CONFIG_FILES([ \
         Makefile \
         libqservice/Makefile \
         libqdutils/Makefile \
+        libgralloc/Makefile \
         sdm/libs/utils/Makefile \
         sdm/libs/core/Makefile
         ])

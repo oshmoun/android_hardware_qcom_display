@@ -48,7 +48,8 @@ class DisplayBase : public DisplayInterface, DumpImpl {
  public:
   DisplayBase(DisplayType display_type, DisplayEventHandler *event_handler,
               HWDeviceType hw_device_type, BufferSyncHandler *buffer_sync_handler,
-              CompManager *comp_manager, HWInfoInterface *hw_info_intf);
+              BufferAllocator *buffer_allocator, CompManager *comp_manager,
+              HWInfoInterface *hw_info_intf);
   virtual ~DisplayBase() { }
   virtual DisplayError Init();
   virtual DisplayError Deinit();
@@ -95,7 +96,6 @@ class DisplayBase : public DisplayInterface, DumpImpl {
   virtual DisplayError GetColorModes(uint32_t *mode_count, std::vector<std::string> *color_modes);
   virtual DisplayError GetColorModeAttr(const std::string &color_mode, AttrVal *attr);
   virtual DisplayError SetColorMode(const std::string &color_mode);
-  virtual DisplayError SetColorModeById(int32_t color_mode_id);
   virtual DisplayError SetColorTransform(const uint32_t length, const double *color_transform);
   virtual DisplayError GetDefaultColorMode(std::string *color_mode);
   virtual DisplayError ApplyDefaultDisplayMode(void);
@@ -138,7 +138,6 @@ class DisplayBase : public DisplayInterface, DumpImpl {
   DisplayError GetHdrColorMode(std::string *color_mode, bool *found_hdr);
   bool IsSupportColorModeAttribute(const std::string &color_mode);
 
-  static std::bitset<kDisplayMax> needs_validate_;
   recursive_mutex recursive_mutex_;
   DisplayType display_type_;
   DisplayEventHandler *event_handler_ = NULL;
@@ -146,12 +145,14 @@ class DisplayBase : public DisplayInterface, DumpImpl {
   HWInterface *hw_intf_ = NULL;
   HWPanelInfo hw_panel_info_;
   BufferSyncHandler *buffer_sync_handler_ = NULL;
+  BufferAllocator *buffer_allocator_ {};
   CompManager *comp_manager_ = NULL;
   DisplayState state_ = kStateOff;
   bool active_ = false;
   Handle hw_device_ = 0;
   Handle display_comp_ctx_ = 0;
   HWLayers hw_layers_;
+  bool needs_validate_ = true;
   bool vsync_enable_ = false;
   uint32_t max_mixer_stages_ = 0;
   HWInfoInterface *hw_info_intf_ = NULL;

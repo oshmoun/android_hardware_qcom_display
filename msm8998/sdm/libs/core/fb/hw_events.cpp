@@ -89,9 +89,6 @@ DisplayError HWEvents::SetEventParser(HWEvent event_type, HWEventData *event_dat
     case HWEvent::IDLE_NOTIFY:
       event_data->event_parser = &HWEvents::HandleIdleTimeout;
       break;
-    case HWEvent::CEC_READ_MESSAGE:
-      event_data->event_parser = &HWEvents::HandleCECMessage;
-      break;
     case HWEvent::EXIT:
       event_data->event_parser = &HWEvents::HandleThreadExit;
       break;
@@ -103,9 +100,6 @@ DisplayError HWEvents::SetEventParser(HWEvent event_type, HWEventData *event_dat
       break;
     case HWEvent::IDLE_POWER_COLLAPSE:
       event_data->event_parser = &HWEvents::HandleIdlePowerCollapse;
-      break;
-    case HWEvent::PINGPONG_TIMEOUT:
-      event_data->event_parser = &HWEvents::HandlePingPongTimeout;
       break;
     default:
       error = kErrorParameters;
@@ -135,14 +129,9 @@ DisplayError HWEvents::Init(int fb_num, HWEventHandler *event_handler,
   event_list_ = event_list;
   poll_fds_.resize(event_list_.size());
   event_thread_name_ += " - " + std::to_string(fb_num_);
-  map_event_to_node_ = {{HWEvent::VSYNC, "vsync_event"},
-                        {HWEvent::EXIT, "thread_exit"},
-                        {HWEvent::IDLE_NOTIFY, "idle_notify"},
-                        {HWEvent::SHOW_BLANK_EVENT, "show_blank_event"},
-                        {HWEvent::CEC_READ_MESSAGE, "cec/rd_msg"},
-                        {HWEvent::THERMAL_LEVEL, "msm_fb_thermal_level"},
-                        {HWEvent::IDLE_POWER_COLLAPSE, "idle_power_collapse"},
-                        {HWEvent::PINGPONG_TIMEOUT, "pingpong_timeout"}};
+  map_event_to_node_ = {{HWEvent::VSYNC, "vsync_event"}, {HWEvent::EXIT, "thread_exit"},
+    {HWEvent::IDLE_NOTIFY, "idle_notify"}, {HWEvent::SHOW_BLANK_EVENT, "show_blank_event"},
+    {HWEvent::THERMAL_LEVEL, "msm_fb_thermal_level"}, {HWEvent::IDLE_POWER_COLLAPSE, "idle_power_collapse"}};
 
   PopulateHWEventData();
 
@@ -230,10 +219,6 @@ void HWEvents::HandleIdleTimeout(char *data) {
   event_handler_->IdleTimeout();
 }
 
-void HWEvents::HandlePingPongTimeout(char *data) {
-  event_handler_->PingPongTimeout();
-}
-
 void HWEvents::HandleThermal(char *data) {
   int64_t thermal_level = 0;
   if (!strncmp(data, "thermal_level=", strlen("thermal_level="))) {
@@ -243,10 +228,6 @@ void HWEvents::HandleThermal(char *data) {
   DLOGI("Received thermal notification with thermal level = %d", thermal_level);
 
   event_handler_->ThermalEvent(thermal_level);
-}
-
-void HWEvents::HandleCECMessage(char *data) {
-  event_handler_->CECMessage(data);
 }
 
 void HWEvents::HandleIdlePowerCollapse(char *data) {

@@ -40,11 +40,7 @@
 namespace sdm {
 
 DisplayError SetCSC(const private_handle_t *pvt_handle, ColorMetaData *color_metadata);
-bool GetColorPrimary(const int32_t &dataspace, ColorPrimaries *color_primary);
-bool GetTransfer(const int32_t &dataspace, GammaTransfer *gamma_transfer);
-void GetRange(const int32_t &dataspace, ColorRange *color_range);
-bool GetSDMColorSpace(const int32_t &dataspace, ColorMetaData *color_metadata);
-bool IsBT2020(const ColorPrimaries &color_primary);
+
 enum GeometryChanges {
   kNone         = 0x000,
   kBlendMode    = 0x001,
@@ -73,6 +69,7 @@ class HWCLayer {
   HWC2::Error SetLayerCompositionType(HWC2::Composition type);
   HWC2::Error SetLayerDataspace(int32_t dataspace);
   HWC2::Error SetLayerDisplayFrame(hwc_rect_t frame);
+  HWC2::Error SetCursorPosition(int32_t x, int32_t y);
   HWC2::Error SetLayerPlaneAlpha(float alpha);
   HWC2::Error SetLayerSourceCrop(hwc_frect_t crop);
   HWC2::Error SetLayerSurfaceDamage(hwc_region_t damage);
@@ -88,7 +85,7 @@ class HWCLayer {
   void ResetGeometryChanges() { geometry_changes_ = GeometryChanges::kNone; }
   void PushReleaseFence(int32_t fence);
   int32_t PopReleaseFence(void);
-  bool ValidateAndSetCSC();
+  bool SupportedDataspace();
   bool SupportLocalConversion(ColorPrimaries working_primaries);
   void ResetValidation() { needs_validate_ = false; }
   bool NeedsValidation() { return (needs_validate_ || geometry_changes_); }

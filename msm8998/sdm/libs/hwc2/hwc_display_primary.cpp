@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014 - 2016, The Linux Foundation. All rights reserved.
+* Copyright (c) 2014 - 2017, The Linux Foundation. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are
@@ -113,6 +113,8 @@ int HWCDisplayPrimary::Init() {
   }
   color_mode_ = new HWCColorMode(display_intf_);
   color_mode_->Init();
+  HWCDebugHandler::Get()->GetProperty("vendor.display.enable_default_color_mode",
+                                      &default_mode_status_);
 
   return status;
 }
@@ -160,6 +162,10 @@ HWC2::Error HWCDisplayPrimary::Validate(uint32_t *out_num_types, uint32_t *out_n
   auto status = HWC2::Error::None;
   DisplayError error = kErrorNone;
 
+  if (default_mode_status_ && !boot_animation_completed_) {
+    ProcessBootAnimCompleted();
+  }
+
   if (display_paused_) {
     MarkLayersForGPUBypass();
     return status;
@@ -184,8 +190,11 @@ HWC2::Error HWCDisplayPrimary::Validate(uint32_t *out_num_types, uint32_t *out_n
     layer_stack_.flags.post_processed_output = post_processed_output_;
   }
 
-  bool one_updating_layer = SingleLayerUpdating();
-  ToggleCPUHint(one_updating_layer);
+  uint32_t num_updating_layers = GetUpdatingLayersCount();
+  bool one_updating_layer = (num_updating_layers == 1);
+  if (num_updating_layers != 0) {
+    ToggleCPUHint(one_updating_layer);
+  }
 
   uint32_t refresh_rate = GetOptimalRefreshRate(one_updating_layer);
   if (current_refresh_rate_ != refresh_rate) {
@@ -217,6 +226,7 @@ HWC2::Error HWCDisplayPrimary::Present(int32_t *out_retire_fence) {
     // If we do not handle the frame set retireFenceFd to outbufAcquireFenceFd
     // Revisit this when validating display_paused
     DisplayError error = display_intf_->Flush();
+    validated_.reset();
     if (error != kErrorNone) {
       DLOGE("Flush failed. Error = %d", error);
     }
@@ -245,7 +255,6 @@ HWC2::Error HWCDisplayPrimary::GetColorModes(uint32_t *out_num_modes,
 }
 
 HWC2::Error HWCDisplayPrimary::SetColorMode(android_color_mode_t mode) {
-  validated_ = false;
   auto status = color_mode_->SetColorMode(mode);
   if (status != HWC2::Error::None) {
     DLOGE("failed for mode = %d", mode);
@@ -253,25 +262,13 @@ HWC2::Error HWCDisplayPrimary::SetColorMode(android_color_mode_t mode) {
   }
 
   callbacks_->Refresh(HWC_DISPLAY_PRIMARY);
-
-  return status;
-}
-
-HWC2::Error HWCDisplayPrimary::SetColorModeById(int32_t color_mode_id) {
-  auto status = color_mode_->SetColorModeById(color_mode_id);
-  if (status != HWC2::Error::None) {
-    DLOGE("failed for mode = %d", color_mode_id);
-    return status;
-  }
-
-  callbacks_->Refresh(HWC_DISPLAY_PRIMARY);
+  validated_.reset();
 
   return status;
 }
 
 HWC2::Error HWCDisplayPrimary::SetColorTransform(const float *matrix,
                                                  android_color_transform_t hint) {
-  validated_ = false;
   if (!matrix) {
     return HWC2::Error::BadParameter;
   }
@@ -285,6 +282,7 @@ HWC2::Error HWCDisplayPrimary::SetColorTransform(const float *matrix,
 
   callbacks_->Refresh(HWC_DISPLAY_PRIMARY);
   color_tranform_failed_ = false;
+  validated_.reset();
 
   return status;
 }
@@ -326,6 +324,7 @@ int HWCDisplayPrimary::Perform(uint32_t operation, ...) {
       return -EINVAL;
   }
   va_end(args);
+  validated_.reset();
 
   return 0;
 }
@@ -409,13 +408,13 @@ DisplayError HWCDisplayPrimary::Refresh() {
 
   callbacks_->Refresh(HWC_DISPLAY_PRIMARY);
   handle_idle_timeout_ = true;
-  validated_ = false;
 
   return error;
 }
 
 void HWCDisplayPrimary::SetIdleTimeoutMs(uint32_t timeout_ms) {
   display_intf_->SetIdleTimeoutMs(timeout_ms);
+  validated_.reset();
 }
 
 static void SetLayerBuffer(const BufferInfo &output_buffer_info, LayerBuffer *output_buffer) {
@@ -515,6 +514,7 @@ void HWCDisplayPrimary::SetFrameDumpConfig(uint32_t count, uint32_t bit_mask_lay
   output_buffer_base_ = buffer;
   post_processed_output_ = true;
   DisablePartialUpdateOneFrame();
+  validated_.reset();
 }
 
 int HWCDisplayPrimary::FrameCaptureAsync(const BufferInfo &output_buffer_info,
@@ -533,12 +533,12 @@ int HWCDisplayPrimary::FrameCaptureAsync(const BufferInfo &output_buffer_info,
   GetPanelResolution(&panel_width, &panel_height);
   GetFrameBufferResolution(&fb_width, &fb_height);
 
-  if (post_processed_output && (output_buffer_info_.buffer_config.width < panel_width ||
-                                output_buffer_info_.buffer_config.height < panel_height)) {
+  if (post_processed_output && (output_buffer_info.buffer_config.width < panel_width ||
+                                output_buffer_info.buffer_config.height < panel_height)) {
     DLOGE("Buffer dimensions should not be less than panel resolution");
     return -1;
-  } else if (!post_processed_output && (output_buffer_info_.buffer_config.width < fb_width ||
-                                        output_buffer_info_.buffer_config.height < fb_height)) {
+  } else if (!post_processed_output && (output_buffer_info.buffer_config.width < fb_width ||
+                                        output_buffer_info.buffer_config.height < fb_height)) {
     DLOGE("Buffer dimensions should not be less than FB resolution");
     return -1;
   }
@@ -559,6 +559,7 @@ DisplayError HWCDisplayPrimary::SetDetailEnhancerConfig
 
   if (display_intf_) {
     error = display_intf_->SetDetailEnhancerData(de_data);
+    validated_.reset();
   }
   return error;
 }
@@ -568,6 +569,7 @@ DisplayError HWCDisplayPrimary::ControlPartialUpdate(bool enable, uint32_t *pend
 
   if (display_intf_) {
     error = display_intf_->ControlPartialUpdate(enable, pending);
+    validated_.reset();
   }
 
   return error;
@@ -578,6 +580,7 @@ DisplayError HWCDisplayPrimary::DisablePartialUpdateOneFrame() {
 
   if (display_intf_) {
     error = display_intf_->DisablePartialUpdateOneFrame();
+    validated_.reset();
   }
 
   return error;
@@ -585,8 +588,9 @@ DisplayError HWCDisplayPrimary::DisablePartialUpdateOneFrame() {
 
 
 DisplayError HWCDisplayPrimary::SetMixerResolution(uint32_t width, uint32_t height) {
-  validated_ = false;
-  return display_intf_->SetMixerResolution(width, height);
+  DisplayError error = display_intf_->SetMixerResolution(width, height);
+  validated_.reset();
+  return error;
 }
 
 DisplayError HWCDisplayPrimary::GetMixerResolution(uint32_t *width, uint32_t *height) {
